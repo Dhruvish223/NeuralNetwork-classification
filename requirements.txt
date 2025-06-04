@@ -3,7 +3,6 @@ pandas
 numpy
 matplotlib
 seaborn
-plotly
 scikit-learn
 openai
 tensorflow
@@ -11,3 +10,4 @@ keras-tuner
 google-generativeai
 xlrd
 openpyxl
+plotly
