@@ -10,3 +10,4 @@ google-generativeai
 xlrd
 openpyxl
 plotly
+tensorflow
