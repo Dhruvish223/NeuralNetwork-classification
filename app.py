@@ -1,168 +1,422 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.express as px
-import seaborn as sns
-import matplotlib.pyplot as plt
-from sklearn.preprocessing import LabelEncoder, StandardScaler
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
-from sklearn.decomposition import PCA
-import tensorflow as tf
-from tensorflow import keras
-from keras import layers
-import keras_tuner as kt
-import google.generativeai as genai
+import os
+import yaml
+from dotenv import load_dotenv
+import time
+from PIL import Image
 
-# -------- SETUP --------
-st.set_page_config(layout="wide")
-st.title("📊 Global Superstore - EDA, Visualization, and AI Modeling Dashboard")
+# Import other modules
+from data_processor import DataProcessor
+from eda import EDA
+from visualizations import Visualizer
+from model import NeuralNetworkModel
+from gemini_integration import GeminiLLM
+import utils
 
-# Gemini API Key input
-api_key = st.sidebar.text_input("Enter your Gemini API key:", type="password")
-if api_key:
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel("gemini-pro")
+# Load environment variables
+load_dotenv()
 
-def gemini_insight(prompt):
-    if api_key:
-        response = model.generate_content(prompt)
-        return response.text
-    return "[Gemini not active: No API key provided.]"
+# Page configuration
+st.set_page_config(
+    page_title="Global Superstore Analysis",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-# -------- FILE UPLOAD --------
-file = st.file_uploader("Upload the Global Superstore Excel File", type=["xlsx"])
+# Apply custom CSS
+def load_css():
+    css = """
+    <style>
+    .main {
+        background-color: #f5f5f5;
+    }
+    .stButton button {
+        background-color: #4CAF50;
+        color: white;
+        border-radius: 5px;
+    }
+    .stProgress .st-bo {
+        background-color: #4CAF50;
+    }
+    .stSidebar {
+        background-color: #f0f2f6;
+    }
+    </style>
+    """
+    st.markdown(css, unsafe_allow_html=True)
 
-if file:
-    df = pd.read_excel(file, sheet_name="Orders")
-    df.columns = df.columns.str.strip()
+load_css()
 
-    with st.expander("📄 Raw Data Preview"):
-        st.dataframe(df.head())
+# Create session states
+if 'data' not in st.session_state:
+    st.session_state.data = None
+if 'processor' not in st.session_state:
+    st.session_state.processor = None
+if 'eda' not in st.session_state:
+    st.session_state.eda = None
+if 'visualizer' not in st.session_state:
+    st.session_state.visualizer = None
+if 'model' not in st.session_state:
+    st.session_state.model = None
+if 'gemini' not in st.session_state:
+    st.session_state.gemini = None
+if 'processed_data' not in st.session_state:
+    st.session_state.processed_data = None
+if 'target_column' not in st.session_state:
+    st.session_state.target_column = None
 
-    # Data cleaning
-    df = df[df['Sales'] != 0].copy()
-    df['Percent Profit'] = df['Profit'] / df['Sales'] * 100
-    df['Order Date'] = pd.to_datetime(df['Order Date'])
-    df['Order Month'] = df['Order Date'].dt.to_period("M").astype(str)
+# Sidebar navigation
+st.sidebar.title("Navigation")
+pages = ["Home", "Data Upload & Cleaning", "Exploratory Data Analysis", 
+         "Data Visualization", "Feature Engineering", "Model Training", 
+         "Gemini LLM Insights", "About"]
+selection = st.sidebar.radio("Go to", pages)
 
-    tab1, tab2, tab3, tab4 = st.tabs(["📊 Categorical Viz", "📈 Numeric Viz", "⏳ Time Series", "🧠 Neural Network"])
+# Helper function to display dataset info
+def display_dataset_info(df):
+    col1, col2 = st.columns(2)
+    with col1:
+        st.write(f"**Rows:** {df.shape[0]}")
+        st.write(f"**Columns:** {df.shape[1]}")
+    with col2:
+        st.write(f"**Missing Values:** {df.isna().sum().sum()}")
+        st.write(f"**Duplicates:** {df.duplicated().sum()}")
+    
+    st.subheader("Data Sample")
+    st.dataframe(df.head(10), use_container_width=True)
+    
+    st.subheader("Data Types")
+    dtype_df = pd.DataFrame(df.dtypes, columns=["Data Type"])
+    dtype_df.index.name = "Column"
+    dtype_df.reset_index(inplace=True)
+    st.dataframe(dtype_df, use_container_width=True)
 
-    with tab1:
-        st.header("Categorical Visualizations")
-        for col in ["Segment", "Region", "Category", "Ship Mode", "Order Priority"]:
-            fig = px.histogram(df, x=col, color="Order Priority", barmode="group",
-                               title=f"{col} vs Order Priority")
-            st.plotly_chart(fig, use_container_width=True)
+# Home page
+if selection == "Home":
+    st.title("Global Superstore Data Analysis Dashboard")
+    st.markdown("""
+    ## Welcome to the Global Superstore Analysis Tool
+    
+    This interactive dashboard allows you to analyze the Global Superstore dataset using advanced data science techniques. You can:
+    
+    - Clean and preprocess data with industry-standard methods
+    - Explore data through comprehensive EDA
+    - Visualize patterns and trends with interactive charts
+    - Apply feature engineering techniques
+    - Train neural network models for multiclass classification
+    - Get AI-powered insights via Google's Gemini LLM
+    
+    ### Getting Started
+    1. Navigate to the **Data Upload & Cleaning** section
+    2. Upload your dataset or use the sample data
+    3. Follow the steps in each section to analyze your data
+    
+    This tool is designed to be both powerful and user-friendly, suitable for both beginners and advanced users.
+    """)
+    
+    # Display a sample image or dashboard preview
+    st.image("https://via.placeholder.com/800x400?text=Global+Superstore+Dashboard", caption="Dashboard Preview")
 
-    with tab2:
-        st.header("Numerical and Correlation Visualizations")
+# Data Upload & Cleaning
+elif selection == "Data Upload & Cleaning":
+    st.title("Data Upload & Cleaning")
+    
+    # File upload section
+    st.subheader("Upload Your Data")
+    uploaded_file = st.file_uploader("Choose a CSV or Excel file", type=["csv", "xlsx", "xls"])
+    
+    use_sample = st.checkbox("Use sample Global Superstore data")
+    
+    if use_sample:
+        try:
+            # Use sample data function from utils
+            df = utils.get_sample_data()
+            st.success("Sample data loaded successfully!")
+            st.session_state.data = df
+        except Exception as e:
+            st.error(f"Error loading sample data: {e}")
+    
+    elif uploaded_file is not None:
+        try:
+            if uploaded_file.name.endswith('.csv'):
+                df = pd.read_csv(uploaded_file)
+            else:
+                df = pd.read_excel(uploaded_file)
+            
+            st.success(f"File {uploaded_file.name} uploaded successfully!")
+            st.session_state.data = df
+        except Exception as e:
+            st.error(f"Error: {e}")
+    
+    # Display dataset if loaded
+    if st.session_state.data is not None:
+        st.subheader("Dataset Overview")
+        display_dataset_info(st.session_state.data)
+        
+        # Initialize the data processor
+        if st.session_state.processor is None:
+            st.session_state.processor = DataProcessor(st.session_state.data)
+        
+        # Data cleaning options
+        st.subheader("Data Cleaning Options")
+        
+        clean_options = st.multiselect(
+            "Select cleaning operations",
+            ["Remove duplicates", "Handle missing values", "Fix data types", 
+             "Remove outliers", "Normalize text fields", "Date formatting"]
+        )
+        
+        if st.button("Apply Cleaning Operations"):
+            with st.spinner("Cleaning data..."):
+                # Process each selected cleaning option
+                if "Remove duplicates" in clean_options:
+                    st.session_state.processor.remove_duplicates()
+                
+                if "Handle missing values" in clean_options:
+                    imputation_method = st.radio(
+                        "Choose imputation method",
+                        ["Mean/Mode", "Median", "KNN Imputer", "Drop rows", "Drop columns"]
+                    )
+                    st.session_state.processor.handle_missing_values(method=imputation_method)
+                
+                if "Fix data types" in clean_options:
+                    st.session_state.processor.fix_data_types()
+                
+                if "Remove outliers" in clean_options:
+                    outlier_method = st.radio(
+                        "Choose outlier detection method",
+                        ["IQR", "Z-Score", "Isolation Forest"]
+                    )
+                    st.session_state.processor.remove_outliers(method=outlier_method)
+                
+                if "Normalize text fields" in clean_options:
+                    st.session_state.processor.normalize_text()
+                
+                if "Date formatting" in clean_options:
+                    st.session_state.processor.format_dates()
+                
+                st.session_state.processed_data = st.session_state.processor.get_processed_data()
+                st.success("Data cleaning completed!")
+        
+        # Display cleaned data if available
+        if st.session_state.processed_data is not None:
+            st.subheader("Cleaned Dataset")
+            display_dataset_info(st.session_state.processed_data)
+            
+            # Option to download cleaned data
+            st.download_button(
+                label="Download cleaned data as CSV",
+                data=st.session_state.processed_data.to_csv(index=False),
+                file_name="cleaned_data.csv",
+                mime="text/csv"
+            )
 
-        # Box plots
-        st.subheader("Box Plots by Segment")
-        fig = px.box(df, x="Segment", y="Percent Profit", color="Segment")
-        st.plotly_chart(fig, use_container_width=True)
+# Exploratory Data Analysis
+elif selection == "Exploratory Data Analysis":
+    st.title("Exploratory Data Analysis")
+    
+    if st.session_state.data is None:
+        st.warning("Please upload data in the 'Data Upload & Cleaning' section first.")
+    else:
+        # Use cleaned data if available, otherwise use original data
+        df = st.session_state.processed_data if st.session_state.processed_data is not None else st.session_state.data
+        
+        # Initialize EDA class if not already done
+        if st.session_state.eda is None:
+            st.session_state.eda = EDA(df)
+        
+        # EDA options
+        st.subheader("EDA Options")
+        
+        eda_options = st.multiselect(
+            "Select EDA operations",
+            ["Summary Statistics", "Correlation Analysis", "Distribution Analysis", 
+             "Time Series Analysis", "Categorical Analysis", "Feature Importance"]
+        )
+        
+        if "Summary Statistics" in eda_options:
+            st.subheader("Summary Statistics")
+            summary_stats = st.session_state.eda.get_summary_statistics()
+            st.dataframe(summary_stats, use_container_width=True)
+            
+            st.subheader("Missing Value Analysis")
+            missing_data = st.session_state.eda.analyze_missing_data()
+            st.dataframe(missing_data, use_container_width=True)
+        
+        if "Correlation Analysis" in eda_options:
+            st.subheader("Correlation Analysis")
+            
+            # Select numeric columns for correlation
+            numeric_cols = df.select_dtypes(include=np.number).columns.tolist()
+            selected_cols = st.multiselect("Select columns for correlation analysis", numeric_cols, default=numeric_cols[:5] if len(numeric_cols) > 5 else numeric_cols)
+            
+            if selected_cols:
+                correlation_plot = st.session_state.eda.plot_correlation(selected_cols)
+                st.plotly_chart(correlation_plot, use_container_width=True)
+            else:
+                st.info("Please select columns for correlation analysis")
+        
+        if "Distribution Analysis" in eda_options:
+            st.subheader("Distribution Analysis")
+            
+            # Select columns for distribution analysis
+            numeric_cols = df.select_dtypes(include=np.number).columns.tolist()
+            dist_col = st.selectbox("Select column for distribution analysis", numeric_cols)
+            
+            dist_plot = st.session_state.eda.plot_distribution(dist_col)
+            st.plotly_chart(dist_plot, use_container_width=True)
+            
+            # Add box plots for numeric columns
+            st.subheader("Box Plots")
+            box_cols = st.multiselect("Select columns for box plots", numeric_cols, default=numeric_cols[:3] if len(numeric_cols) > 3 else numeric_cols)
+            
+            if box_cols:
+                box_plot = st.session)
+    suffix : str
+        Suffix to add (e.g., '%')
+        
+    Returns:
+    --------
+    str
+        Formatted number
+    """
+    if abs(number) >= 1e9:
+        return f"{prefix}{number/1e9:.2f}{suffix} B"
+    elif abs(number) >= 1e6:
+        return f"{prefix}{number/1e6:.2f}{suffix} M"
+    elif abs(number) >= 1e3:
+        return f"{prefix}{number/1e3:.2f}{suffix} K"
+    else:
+        return f"{prefix}{number:.2f}{suffix}"
 
-        # Scatter plot
-        st.subheader("Sales vs Profit Scatter")
-        fig = px.scatter(df, x="Sales", y="Profit", color="Order Priority", trendline="ols")
-        st.plotly_chart(fig, use_container_width=True)
+def create_metrics_dashboard(metrics_dict, title="Key Metrics"):
+    """
+    Create a metrics dashboard
+    
+    Parameters:
+    -----------
+    metrics_dict : dict
+        Dictionary with metric names and values
+    title : str
+        Dashboard title
+        
+    Returns:
+    --------
+    plotly.graph_objects.Figure
+        Dashboard figure
+    """
+    # Create figure with subplots
+    fig = make_subplots(
+        rows=len(metrics_dict) // 2 + len(metrics_dict) % 2,
+        cols=2,
+        subplot_titles=list(metrics_dict.keys())
+    )
+    
+    # Add metrics
+    for i, (metric, value) in enumerate(metrics_dict.items()):
+        row = i // 2 + 1
+        col = i % 2 + 1
+        
+        # Format value
+        if isinstance(value, (int, float)):
+            formatted_value = format_number(value)
+        else:
+            formatted_value = str(value)
+        
+        # Add indicator
+        fig.add_trace(
+            go.Indicator(
+                mode="number",
+                value=value if isinstance(value, (int, float)) else 0,
+                number={'prefix': "", 'suffix': "", 'valueformat': ".2f"},
+                title={'text': f"{metric}<br><span style='font-size:0.8em'>{formatted_value}</span>"}
+            ),
+            row=row, col=col
+        )
+    
+    # Update layout
+    fig.update_layout(
+        height=300 * (len(metrics_dict) // 2 + len(metrics_dict) % 2),
+        title_text=title,
+        title_x=0.5,
+        showlegend=False
+    )
+    
+    return fig
 
-        # Correlation heatmap
-        st.subheader("Correlation Heatmap")
-        numeric = df.select_dtypes(include=np.number)
-        corr = numeric.corr()
-        fig, ax = plt.subplots()
-        sns.heatmap(corr, annot=True, cmap="coolwarm", ax=ax)
-        st.pyplot(fig)
-
-    with tab3:
-        st.header("Time Series Analysis")
-        fig = px.histogram(df, x="Order Month", color="Order Priority", title="Order Priority Over Time")
-        st.plotly_chart(fig, use_container_width=True)
-
-    with tab4:
-        st.header("Neural Network Classification")
-
-        # Label encode target
-        df_nn = df.copy()
-        le = LabelEncoder()
-        df_nn['Order Priority'] = le.fit_transform(df_nn['Order Priority'])
-
-        st.subheader("Option A: Basic Neural Network")
-        features = ["Sales", "Profit", "Discount", "Quantity"]
-        X = df_nn[features]
-        y = df_nn['Order Priority']
-
-        scaler = StandardScaler()
-        X_scaled = scaler.fit_transform(X)
-        X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.3, random_state=42)
-
-        model_basic = keras.Sequential([
-            layers.Dense(32, activation='relu', input_shape=(X_train.shape[1],)),
-            layers.Dense(16, activation='relu'),
-            layers.Dense(4, activation='softmax')
-        ])
-
-        model_basic.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
-        history_basic = model_basic.fit(X_train, y_train, epochs=20, validation_split=0.2, verbose=0)
-        y_pred_basic = np.argmax(model_basic.predict(X_test), axis=1)
-
-        st.text("Classification Report - Basic Model")
-        st.text(classification_report(y_test, y_pred_basic, target_names=le.classes_))
-
-        st.subheader("Option B: Tuned & Enhanced Neural Network")
-        # Feature engineering
-        df_fe = df_nn.copy()
-        df_fe = pd.get_dummies(df_fe, columns=['Segment', 'Region', 'Category', 'Ship Mode'], drop_first=True)
-        X2 = df_fe.drop(['Order ID', 'Customer ID', 'Customer Name', 'Order Date', 'Ship Date',
-                         'Order Priority', 'Product Name', 'Product ID', 'Country', 'City', 'State', 'Postal Code'], axis=1)
-
-        y2 = df_fe['Order Priority']
-        scaler2 = StandardScaler()
-        X2_scaled = scaler2.fit_transform(X2)
-
-        # Optional PCA
-        pca = PCA(n_components=0.95)
-        X2_pca = pca.fit_transform(X2_scaled)
-        X_train2, X_test2, y_train2, y_test2 = train_test_split(X2_pca, y2, test_size=0.3, random_state=42)
-
-        def build_model(hp):
-            model = keras.Sequential()
-            model.add(layers.InputLayer(input_shape=(X_train2.shape[1],)))
-            for i in range(hp.Int("layers", 1, 3)):
-                model.add(layers.Dense(units=hp.Int(f"units_{i}", min_value=32, max_value=128, step=32),
-                                       activation=hp.Choice("act", ["relu", "tanh"])))
-            model.add(layers.Dense(4, activation='softmax'))
-            model.compile(optimizer=keras.optimizers.Adam(),
-                          loss='sparse_categorical_crossentropy',
-                          metrics=['accuracy'])
-            return model
-
-        tuner = kt.RandomSearch(build_model, objective='val_accuracy', max_trials=5, overwrite=True,
-                                directory='my_dir', project_name='superstore')
-        tuner.search(X_train2, y_train2, epochs=10, validation_split=0.2, verbose=0)
-        best_model = tuner.get_best_models(1)[0]
-        y_pred_advanced = np.argmax(best_model.predict(X_test2), axis=1)
-
-        st.text("Classification Report - Tuned Model")
-        st.text(classification_report(y_test2, y_pred_advanced, target_names=le.classes_))
-
-        # Comparison
-        st.subheader("Model Accuracy Comparison")
-        acc1 = accuracy_score(y_test, y_pred_basic)
-        acc2 = accuracy_score(y_test2, y_pred_advanced)
-        st.metric("Basic Model Accuracy", f"{acc1:.2%}")
-        st.metric("Tuned Model Accuracy", f"{acc2:.2%}")
-
-        if api_key:
-            st.subheader("🤖 Gemini Insights")
-            suggestion = gemini_insight(
-                f"Here are two classification reports for predicting Order Priority using neural networks.\n\n"
-                f"Basic Model:\n{classification_report(y_test, y_pred_basic)}\n\n"
-                f"Tuned Model:\n{classification_report(y_test2, y_pred_advanced)}\n\n"
-                f"Suggest improvements or business insights.")
-            st.markdown(suggestion)
-
-else:
-    st.info("📤 Please upload the Global Superstore Excel file to begin.")
+def get_sample_data():
+    """
+    Get sample Global Superstore data
+    
+    Returns:
+    --------
+    pandas.DataFrame
+        Sample dataset
+    """
+    # This is a placeholder function
+    # In a real implementation, you'd provide access to a sample dataset
+    
+    # Generate a simple sample dataset if the real one is not available
+    np.random.seed(42)
+    
+    # Generate sample dates
+    start_date = datetime.datetime(2019, 1, 1)
+    end_date = datetime.datetime(2022, 12, 31)
+    days = (end_date - start_date).days
+    dates = [start_date + datetime.timedelta(days=np.random.randint(0, days)) for _ in range(1000)]
+    
+    # Sample regions, countries, and categories
+    regions = ['North', 'South', 'East', 'West', 'Central']
+    countries = ['USA', 'UK', 'France', 'Germany', 'China', 'Japan', 'Brazil', 'India', 'Australia', 'Canada']
+    categories = ['Furniture', 'Office Supplies', 'Technology']
+    sub_categories = {
+        'Furniture': ['Chairs', 'Tables', 'Bookcases', 'Furnishings'],
+        'Office Supplies': ['Storage', 'Paper', 'Binders', 'Art', 'Supplies'],
+        'Technology': ['Phones', 'Machines', 'Accessories', 'Copiers']
+    }
+    ship_modes = ['Standard Class', 'First Class', 'Second Class', 'Same Day']
+    segments = ['Consumer', 'Corporate', 'Home Office']
+    
+    # Generate data
+    data = {
+        'Order Date': dates,
+        'Ship Date': [date + datetime.timedelta(days=np.random.randint(1, 14)) for date in dates],
+        'Region': [np.random.choice(regions) for _ in range(1000)],
+        'Country': [np.random.choice(countries) for _ in range(1000)],
+        'Category': [np.random.choice(categories) for _ in range(1000)],
+        'Ship Mode': [np.random.choice(ship_modes) for _ in range(1000)],
+        'Customer Segment': [np.random.choice(segments) for _ in range(1000)],
+        'Sales': np.random.uniform(100, 5000, 1000),
+        'Quantity': np.random.randint(1, 20, 1000),
+        'Discount': np.random.uniform(0, 0.5, 1000),
+        'Profit': np.random.uniform(-500, 2000, 1000),
+        'Shipping Cost': np.random.uniform(10, 500, 1000)
+    }
+    
+    # Add Sub-Category based on Category
+    sub_cats = []
+    for cat in data['Category']:
+        sub_cats.append(np.random.choice(sub_categories[cat]))
+    data['Sub-Category'] = sub_cats
+    
+    # Create dataframe
+    df = pd.DataFrame(data)
+    
+    # Add an ID column
+    df['Order ID'] = ['ORD-' + str(i).zfill(5) for i in range(1, 1001)]
+    
+    # Add some missing values
+    for col in df.columns:
+        if col not in ['Order ID', 'Order Date', 'Ship Date']:
+            mask = np.random.choice([True, False], size=len(df), p=[0.05, 0.95])
+            df.loc[mask, col] = np.nan
+    
+    # Add some duplicated rows
+    duplicate_indices = np.random.choice(df.index, size=50, replace=False)
+    duplicates = df.loc[duplicate_indices].copy()
+    df = pd.concat([df, duplicates])
+    
+    return df
