@@ -4,7 +4,7 @@ numpy
 matplotlib
 seaborn
 scikit-learn
-tensorflow
+tensorflow==2.12.0
 openai
 google-generativeai
 
