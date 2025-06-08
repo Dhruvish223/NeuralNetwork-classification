@@ -1,3 +1,5 @@
+import pandas as pd
+
 def is_numeric_column(series: pd.Series, threshold=0.9) -> bool:
     """
     Checks if a column is mostly numeric (percentage of parsable numbers > threshold).
