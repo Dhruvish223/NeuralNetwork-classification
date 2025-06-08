@@ -2,6 +2,7 @@ import streamlit as st
 import seaborn as sns
 import matplotlib.pyplot as plt
 import pandas as pd
+from utils.gemini_api import get_gemini_summary
 
 def run_eda(df):
     with st.expander("📌 Column Types"):
@@ -48,7 +49,7 @@ def run_eda(df):
                 sns.boxplot(x=df[col], ax=ax)
                 st.pyplot(fig)
 
-    # --- 3. GEMINI ANALYSIS OF OUTLIERS ---
+    # 3. LLM Evaluation of Outliers
     with st.expander("🤖 Gemini Evaluation of Outliers"):
         if st.button("🔍 Analyze Outliers using Gemini"):
             outlier_summary = []
@@ -60,9 +61,20 @@ def run_eda(df):
                 upper = desc["75%"] + 1.5 * iqr
                 outlier_count = df[(df[col] < lower) | (df[col] > upper)].shape[0]
 
-                outlier_summary.append(f"Column: **{col}**\n- Outliers Detected: {outlier_count} values outside [{lower:.2f}, {upper:.2f}]")
+                outlier_summary.append(
+                    f"Column: **{col}**\n- Outliers Detected: {outlier_count} values outside [{lower:.2f}, {upper:.2f}]"
+                )
 
             prompt = "Analyze the following outlier detection summary and suggest treatments if needed:\n\n" + "\n\n".join(outlier_summary)
             analysis = get_gemini_summary(prompt)
             st.markdown(analysis)
+
+    # 4. Optional: User Prompt to Ask Gemini Anything
+    with st.expander("💬 Ask Gemini About Your Dataset"):
+        custom_prompt = st.text_area("Enter your question or prompt for Gemini (e.g., 'Summarize the dataset', 'What are the top features?'):")
+        if st.button("Ask Gemini"):
+            response = get_gemini_summary(
+                f"Dataset Info:\n{df.describe().to_string()}\n\nQuestion:\n{custom_prompt}"
+            )
+            st.markdown(response)
 
