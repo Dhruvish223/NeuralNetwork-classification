@@ -15,7 +15,7 @@ def get_gemini_summary(prompt_text, role="You are a helpful data science assista
     - str: Gemini-generated response
     """
     try:
-        model = genai.GenerativeModel("gemini-pro")  # Use gemini-pro (free-tier)
+        model = genai.GenerativeModel("gemini-2.0-flash")  # Use gemini-pro (free-tier)
         chat = model.start_chat()
         prompt = f"{role}\n\n{prompt_text}"
         response = chat.send_message(prompt)
