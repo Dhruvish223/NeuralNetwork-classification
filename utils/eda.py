@@ -1,6 +1,7 @@
 import streamlit as st
 import seaborn as sns
 import matplotlib.pyplot as plt
+import pandas as pd
 
 def run_eda(df):
     with st.expander("📌 Column Types"):
