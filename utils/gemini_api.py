@@ -2,17 +2,26 @@ import google.generativeai as genai
 
 genai.configure(api_key="AIzaSyBaNoenMBY0EfTcwR_DIPKNgeAdjjh7G90")
 
-def get_gemini_summary(report_text):
-    prompt = f"""You are a data science mentor.
-    Analyze the classification report and give:
-    - A summary
-    - Weak areas
-    - Suggestions for improvement
-    - Next steps
-
-    Report:
-    {report_text}
+def get_gemini_summary(prompt_text, role="You are a helpful data science assistant."):
     """
-    model = genai.GenerativeModel("gemini-2.0-flash")
-    response = model.generate_content(prompt)
-    return response.text
+    Universal Gemini summary generator that works with various prompt types.
+
+    Parameters:
+    - prompt_text (str): Core user prompt or context
+    - role (str): Optional role or instruction to guide Gemini
+
+    Returns:
+    - str: Gemini-generated response
+    """
+    try:
+        model = genai.GenerativeModel("gemini-pro")  # Use gemini-pro (free-tier)
+        chat = model.start_chat()
+        prompt = f"{role}\n\n{prompt_text}"
+        response = chat.send_message(prompt)
+        return response.text
+
+    except Exception as e:
+        st.error(f"❌ Gemini API Error: {e}")
+        return "An error occurred while generating the response."
+
+#gemini-2.0-flash
