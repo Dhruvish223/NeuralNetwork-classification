@@ -40,3 +40,4 @@ def run_eda(df, target):
         st.text_area("LLM Bivariate Analysis", get_gemini_summary(prompt2), height=200)
 
     return df.drop(target, axis=1), df[target]
+    #
