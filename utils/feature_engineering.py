@@ -4,11 +4,11 @@ from imblearn.over_sampling import SMOTE
 
 def engineer_features(X_df, y):
     X = X_df.copy()
-    if 'order_date' in X:
-        X['order_date'] = pd.to_datetime(X['order_date'], errors='coerce')
-        X['month'] = X['order_date'].dt.month
-        X['weekday'] = X['order_date'].dt.weekday
-        X.drop(columns=['order_date'], inplace=True)
+    # if 'order_date' in X:
+    #     X['order_date'] = pd.to_datetime(X['order_date'], errors='coerce')
+    #     X['month'] = X['order_date'].dt.month
+    #     X['weekday'] = X['order_date'].dt.weekday
+    #     X.drop(columns=['order_date'], inplace=True)
 
     X = pd.get_dummies(X, drop_first=True)
 
